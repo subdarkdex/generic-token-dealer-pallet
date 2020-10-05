@@ -1,17 +1,12 @@
-# Substrate Pallet Template
+# FRAME pallet - token dealer for fungible assets 
 
-This is a template for a Substrate pallet which lives as its own crate so it can be imported into multiple runtimes. It is based on the ["template" pallet](https://github.com/paritytech/substrate/tree/master/bin/node-template/pallets/template) that is included with the [Substrate node template](https://github.com/paritytech/substrate/tree/master/bin/node-template).
-
-Check out the [HOWTO](HOWTO.md) to learn how to use this for your own runtime module.
-
-This README should act as a general template for distributing your pallet to others.
 
 ## Purpose
 
-This pallet acts as a template for building other pallets.
+This pallet aims to provide functionalities for sending and handling transfer of tokens between parachains and relay chain. 
 
-It currently allows a user to put a `u32` value into storage, which triggers a runtime event.
-
+___ 
+_TODO_
 ## Dependencies
 
 ### Traits
