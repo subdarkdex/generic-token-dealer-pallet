@@ -1,103 +1,154 @@
+// Copyright 2020 Parity Technologies (UK) Ltd.
 #![cfg_attr(not(feature = "std"), no_std)]
 
-/// Edit this file to define custom logic or remove it if it is not needed.
-/// Learn more about FRAME and the core library of Substrate FRAME pallets:
-/// https://substrate.dev/docs/en/knowledgebase/runtime/frame
-
-use frame_support::{decl_module, decl_storage, decl_event, decl_error, dispatch, traits::Get};
+use frame_support::{
+    decl_event, decl_module,
+    dispatch::DispatchResult,
+    traits::{Currency, ExistenceRequirement, WithdrawReason},
+};
 use frame_system::ensure_signed;
 
-#[cfg(test)]
-mod mock;
+use codec::{Decode, Encode};
+use cumulus_primitives::{
+    relay_chain::DownwardMessage,
+    xcmp::{XCMPMessageHandler, XCMPMessageSender},
+    DownwardMessageHandler, ParaId, UpwardMessageOrigin, UpwardMessageSender,
+};
+use polkadot_parachain::primitives::AccountIdConversion;
 
-#[cfg(test)]
-mod tests;
+#[derive(Encode, Decode)]
+pub enum XCMPMessage<XAccountId, XBalance> {
+    /// Transfer tokens to the given account from the Parachain account.
+    TransferToken(XAccountId, XBalance),
+}
 
-/// Configure the pallet by specifying the parameters and types on which it depends.
+type BalanceOf<T> =
+    <<T as Trait>::Currency as Currency<<T as frame_system::Trait>::AccountId>>::Balance;
+
+/// Configuration trait of this pallet.
 pub trait Trait: frame_system::Trait {
-	/// Because this pallet emits events, it depends on the runtime's definition of an event.
-	type Event: From<Event<Self>> + Into<<Self as frame_system::Trait>::Event>;
+    /// Event type used by the runtime.
+    type Event: From<Event<Self>> + Into<<Self as frame_system::Trait>::Event>;
+
+    /// The sender of upward messages.
+    type UpwardMessageSender: UpwardMessageSender<Self::UpwardMessage>;
+
+    /// The upward message type used by the Parachain runtime.
+    type UpwardMessage: codec::Codec;
+
+    /// Currency of the runtime.
+    type Currency: Currency<Self::AccountId>;
+
+    /// The sender of XCMP messages.
+    type XCMPMessageSender: XCMPMessageSender<XCMPMessage<Self::AccountId, BalanceOf<Self>>>;
 }
 
-// The pallet's runtime storage items.
-// https://substrate.dev/docs/en/knowledgebase/runtime/storage
-decl_storage! {
-	// A unique name is used to ensure that the pallet's storage items are isolated.
-	// This name may be updated, but each pallet in the runtime must use a unique name.
-	// ---------------------------------vvvvvvvvvvvvvv
-	trait Store for Module<T: Trait> as TemplateModule {
-		// Learn more about declaring storage items:
-		// https://substrate.dev/docs/en/knowledgebase/runtime/storage#declaring-storage-items
-		Something get(fn something): Option<u32>;
-	}
+decl_event! {
+    pub enum Event<T> where
+        AccountId = <T as frame_system::Trait>::AccountId,
+        Balance = BalanceOf<T>
+    {
+        /// Transferred tokens to the account on the relay chain.
+        TransferredTokensToRelayChain(AccountId, Balance),
+        /// Transferred tokens to the account on request from the relay chain.
+        TransferredTokensFromRelayChain(AccountId, Balance),
+        /// Transferred tokens to the account from the given parachain account.
+        TransferredTokensViaXCMP(ParaId, AccountId, Balance, DispatchResult),
+    }
 }
 
-// Pallets use events to inform users when important changes are made.
-// https://substrate.dev/docs/en/knowledgebase/runtime/events
-decl_event!(
-	pub enum Event<T> where AccountId = <T as frame_system::Trait>::AccountId {
-		/// Event documentation should end with an array that provides descriptive names for event
-		/// parameters. [something, who]
-		SomethingStored(u32, AccountId),
-	}
-);
-
-// Errors inform users that something went wrong.
-decl_error! {
-	pub enum Error for Module<T: Trait> {
-		/// Error names should be descriptive.
-		NoneValue,
-		/// Errors should have helpful documentation associated with them.
-		StorageOverflow,
-	}
-}
-
-// Dispatchable functions allows users to interact with the pallet and invoke state changes.
-// These functions materialize as "extrinsics", which are often compared to transactions.
-// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
 decl_module! {
-	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
-		// Errors must be initialized if they are used by the pallet.
-		type Error = Error<T>;
+    pub struct Module<T: Trait> for enum Call where origin: T::Origin, system = frame_system {
+        /// Transfer `amount` of tokens on the relay chain from the Parachain account to
+        /// the given `dest` account.
+        #[weight = 10]
+        fn transfer_tokens_to_relay_chain(origin, dest: T::AccountId, amount: BalanceOf<T>) {
+            let who = ensure_signed(origin)?;
 
-		// Events must be initialized if they are used by the pallet.
-		fn deposit_event() = default;
+            let _ = T::Currency::withdraw(
+                &who,
+                amount,
+                WithdrawReason::Transfer.into(),
+                ExistenceRequirement::AllowDeath,
+            )?;
 
-		/// An example dispatchable that takes a singles value as a parameter, writes the value to
-		/// storage and emits an event. This function must be dispatched by a signed extrinsic.
-		#[weight = 10_000 + T::DbWeight::get().writes(1)]
-		pub fn do_something(origin, something: u32) -> dispatch::DispatchResult {
-			// Check that the extrinsic was signed and get the signer.
-			// This function will return an error if the extrinsic is not signed.
-			// https://substrate.dev/docs/en/knowledgebase/runtime/origin
-			let who = ensure_signed(origin)?;
+    //        let msg = <T as Trait>::UpwardMessage::transfer(dest.clone(), amount.clone());
+    //        <T as Trait>::UpwardMessageSender::send_upward_message(&msg, UpwardMessageOrigin::Signed)
+    //            .expect("Should not fail; qed");
 
-			// Update storage.
-			Something::put(something);
+            Self::deposit_event(Event::<T>::TransferredTokensToRelayChain(dest, amount));
+        }
 
-			// Emit an event.
-			Self::deposit_event(RawEvent::SomethingStored(something, who));
-			// Return a successful DispatchResult
-			Ok(())
-		}
+        /// Transfer `amount` of tokens to another parachain.
+        #[weight = 10]
+        fn transfer_tokens_to_parachain_chain(
+            origin,
+            para_id: u32,
+            dest: T::AccountId,
+            amount: BalanceOf<T>,
+        ) {
+            //TODO we don't make sure that the parachain has some tokens on the other parachain.
+            let who = ensure_signed(origin)?;
 
-		/// An example dispatchable that may throw a custom error.
-		#[weight = 10_000 + T::DbWeight::get().reads_writes(1,1)]
-		pub fn cause_error(origin) -> dispatch::DispatchResult {
-			let _who = ensure_signed(origin)?;
+            let _ = T::Currency::withdraw(
+                &who,
+                amount,
+                WithdrawReason::Transfer.into(),
+                ExistenceRequirement::AllowDeath,
+            )?;
 
-			// Read a value from storage.
-			match Something::get() {
-				// Return an error if the value has not been set.
-				None => Err(Error::<T>::NoneValue)?,
-				Some(old) => {
-					// Increment the value read from storage; will error in the event of overflow.
-					let new = old.checked_add(1).ok_or(Error::<T>::StorageOverflow)?;
-					// Update the value in storage with the incremented result.
-					Something::put(new);
-					Ok(())
-				},
-			}
-		}
-	}
+            T::XCMPMessageSender::send_xcmp_message(
+                para_id.into(),
+                &XCMPMessage::TransferToken(dest, amount),
+            ).expect("Should not fail; qed");
+        }
+
+        fn deposit_event() = default;
+    }
+}
+
+/// This is a hack to convert from one generic type to another where we are sure that both are the
+/// same type/use the same encoding.
+fn convert_hack<O: Decode>(input: &impl Encode) -> O {
+    input.using_encoded(|e| Decode::decode(&mut &e[..]).expect("Must be compatible; qed"))
+}
+
+impl<T: Trait> DownwardMessageHandler for Module<T> {
+    fn handle_downward_message(msg: &DownwardMessage) {
+        match msg {
+            DownwardMessage::TransferInto(dest, amount, _) => {
+                //            let dest = convert_hack(&dest);
+                //            let amount: BalanceOf<T> = convert_hack(amount);
+
+                //            let _ = T::Currency::deposit_creating(&dest, amount.clone());
+
+                //            Self::deposit_event(Event::<T>::TransferredTokensFromRelayChain(dest, amount));
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<T: Trait> XCMPMessageHandler<XCMPMessage<T::AccountId, BalanceOf<T>>> for Module<T> {
+    fn handle_xcmp_message(src: ParaId, msg: &XCMPMessage<T::AccountId, BalanceOf<T>>) {
+        match msg {
+            XCMPMessage::TransferToken(dest, amount) => {
+                let para_account = src.clone().into_account();
+
+                let res = T::Currency::transfer(
+                    &para_account,
+                    dest,
+                    amount.clone(),
+                    ExistenceRequirement::AllowDeath,
+                );
+
+                Self::deposit_event(Event::<T>::TransferredTokensViaXCMP(
+                    src,
+                    dest.clone(),
+                    amount.clone(),
+                    res,
+                ));
+            }
+        }
+    }
 }
