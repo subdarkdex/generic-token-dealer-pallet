@@ -3,19 +3,19 @@
 
 ## Purpose
 
-This pallet aims to provide functionalities for sending and handling transfer of tokens between parachains and relay chain. 
+This pallet aims to provide functionalities for sending and handling transfer of tokens and currency between parachains and relay chain. 
 
 ___ 
-_TODO_
 ## Dependencies
 
 ### Traits
 
-This pallet does not depend on any externally defined traits.
+This pallet depends on `frame-support/Currency`
 
 ### Pallets
 
-This pallet does not depend on any other FRAME pallet or externally developed modules.
+[pallet-assets](https://github.com/subdarkdex/pallet-assets) is a forked substrate pallet-assets to ensure that the dependencies are compatable with the current cumulus template on which this is built on 
+
 
 ## Installation
 
@@ -24,9 +24,9 @@ This pallet does not depend on any other FRAME pallet or externally developed mo
 To add this pallet to your runtime, simply include the following to your runtime's `Cargo.toml` file:
 
 ```TOML
-[dependencies.substrate-pallet-template]
+[dependencies.substrate-pallet-generic-token-dealer]
 default_features = false
-git = 'https://github.com/substrate-developer-hub/substrate-pallet-template.git'
+git = 'https://github.com/subdarkdex/pallet-generic-token-dealer'
 ```
 
 and update your runtime's `std` feature to include this pallet:
@@ -34,25 +34,30 @@ and update your runtime's `std` feature to include this pallet:
 ```TOML
 std = [
     # --snip--
-    'example_pallet/std',
+    'pallet-generic-token-dealer/std',
 ]
 ```
 
 ### Runtime `lib.rs`
 
-You should implement it's trait like so:
+You should implement it's trait like so, please see mock.rs for details:
 
 ```rust
 /// Used for test_module
-impl example_pallet::Trait for Runtime {
-	type Event = Event;
+impl Trait for TokenDealer {
+    type UpwardMessageSender = MessageBrokerMock;
+    type UpwardMessage = TestUpwardMessage;
+    type XCMPMessageSender = MessageBrokerMock;
+    type Event = TestEvent;
+    type Currency = Balances;
 }
+
 ```
 
 and include it in your `construct_runtime!` macro:
 
 ```rust
-ExamplePallet: substrate_pallet_template::{Module, Call, Storage, Event<T>},
+TokenDealer: generic_token_dealer::{Module, Call, Storage, Event<T>},
 ```
 
 ### Genesis Configuration
@@ -67,4 +72,3 @@ You can view the reference docs for this pallet by running:
 cargo doc --open
 ```
 
-or by visiting this site: <Add Your Link>
