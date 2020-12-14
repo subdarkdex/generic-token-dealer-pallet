@@ -130,7 +130,7 @@ decl_module! {
         /// at the given `dest` account.
         #[weight = 10]
         pub fn transfer_tokens_to_relay_chain(origin, dest: T::AccountId, amount: BalanceOf<T>, asset_id: Option<AssetIdOf<T>>) {
-            let who = ensure_signed(origin.clone())?;
+            let who = ensure_signed(origin)?;
             Self::make_transfer_to_relay_chain(&asset_id, &who, &dest, amount)?;
             Self::deposit_event(Event::<T>::TransferredTokensToRelayChain(who, asset_id, dest, amount));
         }
@@ -146,7 +146,7 @@ decl_module! {
             amount: BalanceOf<T>,
             asset_id: Option<AssetIdOf<T>>,
         ) {
-            let who = ensure_signed(origin.clone())?;
+            let who = ensure_signed(origin)?;
 
             let para_id: ParaId = para_id.into();
             Self::make_transfer_to_parachain(&who, &asset_id, para_id, &dest, &asset_id, amount)?;
@@ -193,7 +193,7 @@ impl<T: Trait> Module<T> {
 
         // Send upward message to Relay Chain to transfer `amount` from this parachain's
         // account on the relay chain to dest account.
-        let msg = <T::UpwardMessage>::transfer(dest.clone(), amount.clone());
+        let msg = <T::UpwardMessage>::transfer(dest.clone(), amount);
         <T as Trait>::UpwardMessageSender::send_upward_message(&msg, UpwardMessageOrigin::Signed)
             .expect("Should not fail; qed");
         Ok(())
@@ -227,7 +227,7 @@ impl<T: Trait> Module<T> {
 
         // Send XCMPMessage to the other parachain
         T::XCMPMessageSender::send_xcmp_message(
-            para_id.into(),
+            para_id,
             &XCMPMessage::TransferToken(dest.clone(), amount, *dest_asset_id),
         )
         .expect("Should not fail; qed");
@@ -239,6 +239,7 @@ impl<T: Trait> DownwardMessageHandler for Module<T> {
     /// Handles messages from the Relay Chain, only match to `TransferInto` type
     /// Here we use the remark field of the downward message to decode into Option<AssetId>
     fn handle_downward_message(msg: &DownwardMessage) {
+        #[allow(clippy::clippy::single_match)]
         match msg {
             DownwardMessage::TransferInto(dest, relay_amount, remark) => {
                 let dest: T::AccountId = convert_hack(&dest);
@@ -263,7 +264,7 @@ impl<T: Trait> DownwardMessageHandler for Module<T> {
                 };
 
                 Self::deposit_event(Event::<T>::TransferredTokensFromRelayChain(
-                    dest.clone(),
+                    dest,
                     relay_amount,
                     asset_id,
                     res,
@@ -304,7 +305,7 @@ impl<T: Trait> XCMPMessageHandler<XCMPMessage<T::AccountId, BalanceOf<T>, AssetI
                 Self::deposit_event(Event::<T>::TransferredTokensViaXCMP(
                     src,
                     dest.clone(),
-                    amount.clone(),
+                    *amount,
                     *asset_id,
                     res,
                 ));
